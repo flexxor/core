@@ -6,7 +6,8 @@ from enocean.communicators import Communicator
 from enocean.protocol.constants import PACKET
 from enocean.protocol.packet import Packet, RadioPacket
 
-from homeassistant.core import HomeAssistant, ServiceCall
+from components.enocean import utils
+from homeassistant.core import HomeAssistant
 
 
 class TeachInHandler(ABC):
@@ -96,3 +97,8 @@ class FourBsTeachInHandler(TeachInHandler):
         successful_sent = communicator.send(teach_in_response_packet)
 
         return successful_sent, to_be_taught_device_id
+
+
+def is_bs4_teach_in_packet(packet):
+    """Checker whether it's a 4BS packet."""
+    return len(packet.data) > 3 and utils.get_bit(packet.data[4], 3) == 0

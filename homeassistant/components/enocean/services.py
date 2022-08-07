@@ -2,7 +2,7 @@
 import logging
 import queue
 import time
-from typing import Union
+from typing import Union, List
 
 from enocean import utils
 from enocean.communicators import Communicator
@@ -12,9 +12,12 @@ import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
-from .const import DOMAIN
+from .const import DOMAIN, EVENT_BASE_ID_TO_USE_SET
 from .teachin import FourBsTeachInHandler, TeachInHandler, UteTeachInHandler
 from .utils import get_communicator_reference, hex_to_list
+
+import homeassistant.components.enocean as ec
+
 
 TEACH_IN_DEVICE = "teach_in_device"  # service name
 SERVICE_CALL_ATTR_TEACH_IN_SECONDS = "teach_in_time"
@@ -111,7 +114,7 @@ def determine_rorg_type(packet):
     if packet.data[0] == RORG.UTE:
         return RORG.UTE
 
-    if packet.packet_type == PACKET.RADIO and packet.rorg == RORG.BS4:
+    if packet.packet_type == PACKET.RADIO_ERP1 and packet.rorg == RORG.BS4:
         return RORG.BS4
 
     return result
@@ -120,46 +123,50 @@ def determine_rorg_type(packet):
 def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
     """Handle the teach-in request of a device."""
 
-    if is_service_already_running(hass):
+    enocean_data = hass.data.get(ec.DATA_ENOCEAN, {})
+    dongle: ec.EnOceanDongle = enocean_data[ec.ENOCEAN_DONGLE]
+    if not dongle:
+        _LOGGER.error("No EnOcean Dongle configured or available. No teach-in possible.")
+        return
+
+    # if is_service_already_running(hass):
+    #     return
+
+    if dongle.is_teachin_service_running:
         return
 
     # set the running state to prevent the service from running twice
-    hass.states.set(SERVICE_TEACHIN_STATE, SERVICE_TEACHIN_STATE_VALUE_RUNNING)
+    dongle.is_teachin_service_running = True
+    dongle.teach_in_enabled = True
+    # hass.states.set(SERVICE_TEACHIN_STATE, SERVICE_TEACHIN_STATE_VALUE_RUNNING)
 
     communicator: Communicator = get_communicator_reference(hass)
 
-    # store the originally set callback to restore it after
-    # the end of the teach-in process.
-    _LOGGER.debug("Storing existing callback function")
-    # cb_to_restore = communicator.callback
-    # the "correct" way would be to add a property to the communicator
-    # to get access to the communicator. But, the enocean library seems abandoned
-    cb_to_restore = communicator._Communicator__callback
-
-    communicator.callback = None
+    # get the base id of the transceiver module
+    base_id = dongle.communicator_base_id()
+    _LOGGER.info("Base ID of EnOcean transceiver module: %s", str(base_id))
 
     try:
         # get time to run of the teach-in process from the service call
         teachin_for_seconds = get_teach_in_seconds(service_call)
 
-        # get the base id of the transceiver module
-        base_id = communicator.base_id
-        _LOGGER.info("Base ID of EnOcean transceiver module: %s", str(base_id))
-
-        # clear the receive-queue to only listen to new teach-in packets
-        with communicator.receive.mutex:
-            communicator.receive.queue.clear()
-
         teachin_start_time_seconds = time.time()
 
         base_id_from_service_call = get_base_id_from_service_call(service_call)
 
-        base_id_to_use: list[int]
+        base_id_to_use: List[int]
         if base_id_from_service_call is None:
             base_id_to_use = base_id
         else:
             base_id_to_use = hex_to_list(base_id_from_service_call)
 
+        # fire event
+        event_data = {
+            "base_id_to_use": base_id_to_use
+        }
+        hass.bus.async_fire(EVENT_BASE_ID_TO_USE_SET, event_data)
+
+        # TODO: listen for event?
         successful_teachin, to_be_taught_device_id = react_to_teachin_requests(
             communicator,
             hass,
@@ -169,11 +176,10 @@ def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
         )
 
     finally:
-        # restore callback in any case
-        _LOGGER.debug("Restoring callback function")
-        communicator._Communicator__callback = cb_to_restore
         # clear the state so that the service can be called again
-        hass.states.set(SERVICE_TEACHIN_STATE, "")
+        # hass.states.set(SERVICE_TEACHIN_STATE, "")
+        dongle.is_teachin_service_running = False
+        # dongle.teach_in_enabled = False
 
     message, teach_in_result_msg = create_result_messages(
         successful_teachin, to_be_taught_device_id
@@ -192,14 +198,14 @@ def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
     )
 
 
-def is_service_already_running(hass):
-    """Check if the service is already running."""
-    service_state = hass.states.get(SERVICE_TEACHIN_STATE)
-    if (
-        service_state is not None
-        and SERVICE_TEACHIN_STATE_VALUE_RUNNING == service_state.state
-    ):
-        _LOGGER.warning("Service is already running. Aborting...")
+# def is_service_already_running(hass):
+#     """Check if the service is already running."""
+#     service_state = hass.states.get(SERVICE_TEACHIN_STATE)
+#     if (
+#         service_state is not None
+#         and SERVICE_TEACHIN_STATE_VALUE_RUNNING == service_state.state
+#     ):
+#         _LOGGER.warning("Service is already running. Aborting...")
 
 
 def create_result_messages(successful_teachin, to_be_taught_device_id):
@@ -243,53 +249,57 @@ def react_to_teachin_requests(
 
         # Currently, there is no callback handler (we set it to None), so there can be
         # packets in the receive-queue. Try to process them.
-        try:
+        # try:
             # get the packets from the communicator and check whether they are teachin packets
-            packet: Packet = communicator.receive.get(block=True, timeout=1)
+            # packet: Packet = communicator.receive.get(block=True, timeout=1)
 
-            rorg_type = determine_rorg_type(packet)
+            # rorg_type = determine_rorg_type(packet)
 
-            _LOGGER.info(str(packet))
-            if isinstance(packet, UTETeachInPacket):
-                # THINK: handler, maybe deactivate teach in before and handle it the "handler"
-                handler: TeachInHandler = UteTeachInHandler()
-                (
-                    successful_sent,
-                    to_be_taught_device_id,
-                ) = handler.handle_teach_in_request(hass, packet, communicator)
-                return successful_sent, to_be_taught_device_id
+        #     _LOGGER.info(str(packet))
+        #     if isinstance(packet, UTETeachInPacket):
+        #         # THINK: handler, maybe deactivate teach in before and handle it the "handler"
+        #         handler: TeachInHandler = UteTeachInHandler()
+        #         (
+        #             successful_sent,
+        #             to_be_taught_device_id,
+        #         ) = handler.handle_teach_in_request(hass, packet, communicator)
+        #         return successful_sent, to_be_taught_device_id
+        #
+        #     # if packet.packet_type == PACKET.RADIO_ERP1 and packet.rorg == RORG.BS4:
+        #     if rorg_type == RORG.BS4:
+        #         _LOGGER.info("Received BS4 packet")
+        #         # get the third bit of the fourth byte and check for "0".
+        #         if is_bs4_teach_in_packet(packet):
+        #             # we have a teach-in packet
+        #             # let's create a proper response
+        #             handler: TeachInHandler = FourBsTeachInHandler()
+        #             handler.set_base_id(base_id)
+        #
+        #             (
+        #                 successful_sent,
+        #                 to_be_taught_device_id,
+        #             ) = handler.handle_teach_in_request(hass, packet, communicator)
+        #
+        #             if successful_sent:
+        #                 # the package was put to the transmit queue
+        #                 _LOGGER.info("Sent teach-in response via communicator")
+        #                 successful_teachin = True
+        #                 break
+        #     else:
+        #         # packet type not relevant to teach-in process
+        #         # drop it. Re-injection into the queue doesn't make sense here. Eventually one
+        #         # could save them all for later usage?
+        #         continue
+        # except queue.Empty:
+        #     continue
+        pass
 
-            # if packet.packet_type == PACKET.RADIO_ERP1 and packet.rorg == RORG.BS4:
-            if rorg_type == RORG.BS4:
-                _LOGGER.info("Received BS4 packet")
-                # get the third bit of the fourth byte and check for "0".
-                if is_bs4_teach_in_packet(packet):
-                    # we have a teach-in packet
-                    # let's create a proper response
-                    handler: TeachInHandler = FourBsTeachInHandler()
-                    handler.set_base_id(base_id)
-
-                    (
-                        successful_sent,
-                        to_be_taught_device_id,
-                    ) = handler.handle_teach_in_request(hass, packet, communicator)
-
-                    if successful_sent:
-                        # the package was put to the transmit queue
-                        _LOGGER.info("Sent teach-in response via communicator")
-                        successful_teachin = True
-                        break
-            else:
-                # packet type not relevant to teach-in process
-                # drop it. Re-injection into the queue doesn't make sense here. Eventually one
-                # could save them all for later usage?
-                continue
-        except queue.Empty:
-            continue
     if to_be_taught_device_id is not None:
         _LOGGER.info("Device ID of paired device: %s", to_be_taught_device_id)
     if not successful_teachin:
         _LOGGER.info("Teach-In time is over.")
+
+    # dongle.teach_in_enabled = False  # no reference here
     return successful_teachin, to_be_taught_device_id
 
 
@@ -305,19 +315,20 @@ def get_next_free_base_id(hass: HomeAssistant, service_call: ServiceCall):
 
     communicator: Communicator = get_communicator_reference(hass)
 
-    _LOGGER.debug("Storing existing callback function")
-    cb_to_restore = communicator._Communicator__callback
+    # _LOGGER.debug("Storing existing callback function")
+    # cb_to_restore = communicator._Communicator__callback
     # communicator___callback = communicator.__callback
     # store the originally set callback to restore it after
     # the end of the teach-in process.
-    communicator._Communicator__callback = None
+    # communicator._Communicator__callback = None
 
     try:
         base_id = communicator.base_id
         _LOGGER.info("Base id to use: %s", base_id)
 
     finally:
-        communicator._Communicator__callback = cb_to_restore
+        pass
+        # communicator._Communicator__callback = cb_to_restore
 
     # entries: ConfigEntries = hass.config_entries. There should be no config entries
     # at that time for devices
