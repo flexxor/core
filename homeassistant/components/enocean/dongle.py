@@ -14,7 +14,12 @@ from homeassistant.core import Event, HomeAssistant
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, dispatcher_send
 
 from .const import SIGNAL_RECEIVE_MESSAGE, SIGNAL_SEND_MESSAGE, EVENT_BASE_ID_TO_USE_SET
-from .teachin import TeachInHandler, UteTeachInHandler, FourBsTeachInHandler, is_bs4_teach_in_packet
+from .teachin import (
+    TeachInHandler,
+    UteTeachInHandler,
+    FourBsTeachInHandler,
+    is_bs4_teach_in_packet,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,7 +43,7 @@ class EnOceanDongle:
         self.hass = hass
         self.dispatcher_disconnect_handle = None
         self.is_teachin_service_running = False
-        self._teachin_base_id_to_use: List[int] = None
+        self._teachin_base_id_to_use: list[int] = None
         self.teach_in_enabled = False
 
         # listen for events when the id to use for the teach-in has been changed
@@ -46,7 +51,7 @@ class EnOceanDongle:
 
     def base_id_to_use_listener(self, event: Event):
         """Listen to base_id_to_use_events for teach_in."""
-        self._teachin_base_id_to_use = event.data.get("base_id_to_use")
+        self._teachin_base_id_to_use = event.data.get("base_id_to_use", [0, 0, 0, 0])
         _LOGGER.info("Base id to use: %s", str(self._teachin_base_id_to_use))
 
     async def async_setup(self):
@@ -102,11 +107,13 @@ class EnOceanDongle:
                     (
                         successful_sent,
                         to_be_taught_device_id,
-                    ) = handler.handle_teach_in_request(self.hass, packet, self._communicator)
+                    ) = handler.handle_teach_in_request(
+                        self.hass, packet, self._communicator
+                    )
 
                     event_data = {
                         "successful_sent": successful_sent,
-                        "to_be_taught_device_id": to_be_taught_device_id
+                        "to_be_taught_device_id": to_be_taught_device_id,
                     }
                     self.hass.bus.async_fire("enocean_event_name", event_data)
 
@@ -122,7 +129,9 @@ class EnOceanDongle:
                     (
                         successful_sent,
                         to_be_taught_device_id,
-                    ) = handler.handle_teach_in_request(self.hass, packet, self._communicator)
+                    ) = handler.handle_teach_in_request(
+                        self.hass, packet, self._communicator
+                    )
 
                     if successful_sent:
                         # the package was put to the transmit queue
@@ -131,7 +140,7 @@ class EnOceanDongle:
 
                     event_data = {
                         "successful_sent": successful_sent,
-                        "to_be_taught_device_id": to_be_taught_device_id
+                        "to_be_taught_device_id": to_be_taught_device_id,
                     }
 
                     self.hass.bus.async_fire("enocean_event_name", event_data)
@@ -168,7 +177,9 @@ class EnOceanDongle:
         # "restore" original callback
         if self.communicator.is_alive():
             self.communicator.stop()
-            self.communicator = SerialCommunicator(port=self.serial_path, callback=self.callback)
+            self.communicator = SerialCommunicator(
+                port=self.serial_path, callback=self.callback
+            )
 
         return self._base_id
 

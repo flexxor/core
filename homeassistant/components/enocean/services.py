@@ -1,19 +1,15 @@
 """EnOcean services."""
 import logging
-import queue
 import time
 from typing import Union, List
 
-from enocean import utils
 from enocean.communicators import Communicator
 from enocean.protocol.constants import PACKET, RORG
-from enocean.protocol.packet import Packet, UTETeachInPacket
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import DOMAIN, EVENT_BASE_ID_TO_USE_SET
-from .teachin import FourBsTeachInHandler, TeachInHandler, UteTeachInHandler
 from .utils import get_communicator_reference, hex_to_list
 
 import homeassistant.components.enocean as ec
@@ -67,7 +63,7 @@ def async_setup_services(hass: HomeAssistant) -> None:
 
     services = {
         TEACH_IN_DEVICE: handle_teach_in,
-        GET_NEXT_FREE_BASE_ID: get_next_free_base_id,
+        # GET_NEXT_FREE_BASE_ID: get_next_free_base_id,
     }
 
     def call_enocean_service(service_call: ServiceCall) -> None:
@@ -126,11 +122,10 @@ def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
     enocean_data = hass.data.get(ec.DATA_ENOCEAN, {})
     dongle: ec.EnOceanDongle = enocean_data[ec.ENOCEAN_DONGLE]
     if not dongle:
-        _LOGGER.error("No EnOcean Dongle configured or available. No teach-in possible.")
+        _LOGGER.error(
+            "No EnOcean Dongle configured or available. No teach-in possible."
+        )
         return
-
-    # if is_service_already_running(hass):
-    #     return
 
     if dongle.is_teachin_service_running:
         return
@@ -138,7 +133,6 @@ def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
     # set the running state to prevent the service from running twice
     dongle.is_teachin_service_running = True
     dongle.teach_in_enabled = True
-    # hass.states.set(SERVICE_TEACHIN_STATE, SERVICE_TEACHIN_STATE_VALUE_RUNNING)
 
     communicator: Communicator = get_communicator_reference(hass)
 
@@ -154,16 +148,14 @@ def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
 
         base_id_from_service_call = get_base_id_from_service_call(service_call)
 
-        base_id_to_use: List[int]
+        base_id_to_use: list[int]
         if base_id_from_service_call is None:
             base_id_to_use = base_id
         else:
             base_id_to_use = hex_to_list(base_id_from_service_call)
 
         # fire event
-        event_data = {
-            "base_id_to_use": base_id_to_use
-        }
+        event_data = {"base_id_to_use": base_id_to_use}
         hass.bus.async_fire(EVENT_BASE_ID_TO_USE_SET, event_data)
 
         # TODO: listen for event?
@@ -176,8 +168,7 @@ def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
         )
 
     finally:
-        # clear the state so that the service can be called again
-        # hass.states.set(SERVICE_TEACHIN_STATE, "")
+        # deactivate teach-in processing
         dongle.is_teachin_service_running = False
         # dongle.teach_in_enabled = False
 
@@ -196,16 +187,6 @@ def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
             "title": "Result of Teach-In service call",
         },
     )
-
-
-# def is_service_already_running(hass):
-#     """Check if the service is already running."""
-#     service_state = hass.states.get(SERVICE_TEACHIN_STATE)
-#     if (
-#         service_state is not None
-#         and SERVICE_TEACHIN_STATE_VALUE_RUNNING == service_state.state
-#     ):
-#         _LOGGER.warning("Service is already running. Aborting...")
 
 
 def create_result_messages(successful_teachin, to_be_taught_device_id):
@@ -241,57 +222,6 @@ def react_to_teachin_requests(
     to_be_taught_device_id = None
 
     while time.time() < teachin_start_time_seconds + teachin_for_seconds:
-
-        # handle packet --> learn device
-        # how? reacting to signals from alternative callback? Currently, not.
-        # getting the receive-queue? yes
-        # One could exchange the callback handler during the teach-in, maybe
-
-        # Currently, there is no callback handler (we set it to None), so there can be
-        # packets in the receive-queue. Try to process them.
-        # try:
-            # get the packets from the communicator and check whether they are teachin packets
-            # packet: Packet = communicator.receive.get(block=True, timeout=1)
-
-            # rorg_type = determine_rorg_type(packet)
-
-        #     _LOGGER.info(str(packet))
-        #     if isinstance(packet, UTETeachInPacket):
-        #         # THINK: handler, maybe deactivate teach in before and handle it the "handler"
-        #         handler: TeachInHandler = UteTeachInHandler()
-        #         (
-        #             successful_sent,
-        #             to_be_taught_device_id,
-        #         ) = handler.handle_teach_in_request(hass, packet, communicator)
-        #         return successful_sent, to_be_taught_device_id
-        #
-        #     # if packet.packet_type == PACKET.RADIO_ERP1 and packet.rorg == RORG.BS4:
-        #     if rorg_type == RORG.BS4:
-        #         _LOGGER.info("Received BS4 packet")
-        #         # get the third bit of the fourth byte and check for "0".
-        #         if is_bs4_teach_in_packet(packet):
-        #             # we have a teach-in packet
-        #             # let's create a proper response
-        #             handler: TeachInHandler = FourBsTeachInHandler()
-        #             handler.set_base_id(base_id)
-        #
-        #             (
-        #                 successful_sent,
-        #                 to_be_taught_device_id,
-        #             ) = handler.handle_teach_in_request(hass, packet, communicator)
-        #
-        #             if successful_sent:
-        #                 # the package was put to the transmit queue
-        #                 _LOGGER.info("Sent teach-in response via communicator")
-        #                 successful_teachin = True
-        #                 break
-        #     else:
-        #         # packet type not relevant to teach-in process
-        #         # drop it. Re-injection into the queue doesn't make sense here. Eventually one
-        #         # could save them all for later usage?
-        #         continue
-        # except queue.Empty:
-        #     continue
         pass
 
     if to_be_taught_device_id is not None:
@@ -301,11 +231,6 @@ def react_to_teachin_requests(
 
     # dongle.teach_in_enabled = False  # no reference here
     return successful_teachin, to_be_taught_device_id
-
-
-def is_bs4_teach_in_packet(packet):
-    """Checker whether it's a 4BS packet."""
-    return len(packet.data) > 3 and utils.get_bit(packet.data[4], 3) == 0
 
 
 def get_next_free_base_id(hass: HomeAssistant, service_call: ServiceCall):
