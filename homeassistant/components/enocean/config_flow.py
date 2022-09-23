@@ -1,15 +1,10 @@
 """Config flows for the ENOcean integration."""
 from __future__ import annotations
 
-import asyncio
 import logging
-import queue
 import time
 from typing import Any
 
-from enoceanx.communicators import Communicator
-from enoceanx.protocol.constants import PACKET, RORG
-from enoceanx.protocol.packet import Packet, UTETeachInPacket
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -20,6 +15,8 @@ from homeassistant.data_entry_flow import FlowResult
 
 from . import dongle, utils
 from .const import DOMAIN, ERROR_INVALID_DONGLE_PATH, LOGGER
+from .teachin import react_to_teachin_requests
+from .utils import get_communicator_base_id
 
 
 class EnoceanOptionsFlowHandler(config_entries.OptionsFlow):
@@ -76,7 +73,7 @@ class EnoceanOptionsFlowHandler(config_entries.OptionsFlow):
 
         # get the base id of the transceiver to fill out the default value
         if user_input is None:
-            base_id, cb_to_restore = await self.get_communicator_base_id(communicator)
+            base_id, cb_to_restore = await get_communicator_base_id(self.Logger, communicator)
             # validate base id? TODO: correct format
 
         if base_id is None:
@@ -112,13 +109,13 @@ class EnoceanOptionsFlowHandler(config_entries.OptionsFlow):
                 (
                     successful_teachin,
                     to_be_taught_device_id,
-                ) = await self.react_to_teachin_requests(
-                    communicator,
-                    self.hass,
-                    teach_in_time,
-                    teachin_start_time_seconds,
-                    base_id_to_use,
-                )
+                ) = await react_to_teachin_requests(self.Logger,
+                                                    communicator,
+                                                    self.hass,
+                                                    teach_in_time,
+                                                    teachin_start_time_seconds,
+                                                    base_id_to_use,
+                                                    )
 
             finally:
                 # restore callback in any case
@@ -139,28 +136,6 @@ class EnoceanOptionsFlowHandler(config_entries.OptionsFlow):
     #         return self.async_show_form(step_id="finish")
     #     return self.async_create_entry(title="Some title", data={})
 
-    async def get_communicator_base_id(self, communicator: Communicator):
-        """Determine the communicators base id."""
-        try:
-            # store the originally set callback to restore it after
-            # the end of the teach-in process.
-            self.Logger.debug("Storing existing callback function")
-            # cb_to_restore = communicator.callback
-            # the "correct" way would be to add a property to the communicator
-            # to get access to the communicator. But, the enocean library seems abandoned
-            cb_to_restore = communicator.callback
-
-            communicator.callback = None
-
-            # get the base id of the transceiver module
-            base_id = communicator.base_id
-            self.Logger.debug("Base ID of EnOcean transceiver module: %s", str(base_id))
-
-        finally:
-            # restore the callback
-            communicator.callback = cb_to_restore
-        return base_id, cb_to_restore
-
     @staticmethod
     async def create_result_messages(self, successful_teachin, to_be_taught_device_id):
         """Create both messages for UI and logger."""
@@ -180,105 +155,6 @@ class EnoceanOptionsFlowHandler(config_entries.OptionsFlow):
             message = "EnOcean Teach-In not successful."
         return message, teach_in_result_msg
         # return self.async_create_entry(title="", data=user_input)
-
-    @staticmethod
-    async def is_bs4_teach_in_packet(packet):
-        """Checker whether it's a 4BS packet."""
-        return len(packet.data) > 3 and utils.get_bit(packet.data[4], 3) == 0
-
-    @staticmethod
-    async def determine_rorg_type(self, packet):
-        """Determine the type of packet."""
-        if packet is None:
-            return None
-
-        result = None
-        if packet.data[0] == RORG.UTE:
-            return RORG.UTE
-
-        if packet.packet_type == PACKET.RADIO and packet.rorg == RORG.BS4:
-            return RORG.BS4
-
-        return result
-
-    async def react_to_teachin_requests(
-        self,
-        communicator,
-        hass,
-        teachin_for_seconds,
-        teachin_start_time_seconds,
-        base_id,
-    ):
-        """Listen only for teachin-telegrams until time is over or the teachin was successful.
-
-        Loop to empty the receive-queue.
-        """
-
-        successful_teachin = False
-        to_be_taught_device_id = None
-
-        while time.time() < teachin_start_time_seconds + teachin_for_seconds:
-            # handle packet --> learn device
-            # how? reacting to signals from alternative callback? Currently, not.
-            # getting the receive-queue? yes
-            # One could exchange the callback handler during the teach-in, maybe
-            # Currently, there is no callback handler (we set it to None), so there can be
-            # packets in the receive-queue. Try to process them.
-            try:
-                # get the packets from the communicator and check whether they are teachin packets
-                packet: Packet = communicator.receive.get(block=True, timeout=1)
-
-                rorg_type = await self.determine_rorg_type(packet)
-
-                self.Logger.debug(str(packet))
-                if isinstance(packet, UTETeachInPacket):
-                    # THINK: handler, maybe deactivate teach in before and handle it the "handler"
-                    from components.enocean.teachin import (
-                        TeachInHandler,
-                        UteTeachInHandler,
-                    )
-
-                    handler: TeachInHandler = UteTeachInHandler()
-                    (
-                        successful_sent,
-                        to_be_taught_device_id,
-                    ) = handler.handle_teach_in_request(hass, packet, communicator)
-                    return successful_sent, to_be_taught_device_id
-
-                # if packet.packet_type == PACKET.RADIO_ERP1 and packet.rorg == RORG.BS4:
-                if rorg_type == RORG.BS4:
-                    self.Logger.debug("Received BS4 packet")
-                    # get the third bit of the fourth byte and check for "0".
-                    if await self.is_bs4_teach_in_packet(packet):
-                        # we have a teach-in packet
-                        # let's create a proper response
-                        from components.enocean.teachin import FourBsTeachInHandler
-
-                        handler: TeachInHandler = FourBsTeachInHandler()
-                        handler.set_base_id(base_id)
-
-                        (
-                            successful_sent,
-                            to_be_taught_device_id,
-                        ) = handler.handle_teach_in_request(hass, packet, communicator)
-
-                        if successful_sent:
-                            # the package was put to the transmit queue
-                            self.Logger.info("Sent teach-in response via communicator")
-                            successful_teachin = True
-                            break
-                else:
-                    # packet type not relevant to teach-in process
-                    # drop it. Re-injection into the queue doesn't make sense here. Eventually one
-                    # could save them all for later usage?
-                    continue
-            except queue.Empty:
-                continue
-        if to_be_taught_device_id is not None:
-            self.Logger.info("Device ID of paired device: %s", to_be_taught_device_id)
-        if not successful_teachin:
-            self.Logger.info("Teach-In time is over")
-        return successful_teachin, to_be_taught_device_id
 
     # async def async_step_abort(self):
     #     return self.async_abort(reason="Aborted by user")
@@ -319,7 +195,6 @@ class EnOceanFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
         # user_input is none when the form is called the for the first time
 
         if self._async_current_entries():
-            # TODO here THINK: show menu to offer the option to teach-in a new device
             return self.async_abort(reason="single_instance_allowed")
 
         # no config entry was available, so try to detect a dongle

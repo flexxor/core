@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 
 from enoceanx.communicators import Communicator
+from enoceanx.protocol.constants import RORG, PACKET
 
 import homeassistant.components.enocean as ec  # import DATA_ENOCEAN, ENOCEAN_DONGLE, EnOceanDongle
 from homeassistant.core import HomeAssistant
@@ -43,4 +44,42 @@ def hex_to_list(hex_value):
         result.append(hex_value % 0x100)
         hex_value = hex_value // 256
     result.reverse()
+    return result
+
+
+async def get_communicator_base_id(logger, communicator: Communicator):
+    """Determine the communicators base id."""
+    try:
+        # store the originally set callback to restore it after
+        # the end of the teach-in process.
+        logger.debug("Storing existing callback function")
+        # cb_to_restore = communicator.callback
+        # the "correct" way would be to add a property to the communicator
+        # to get access to the communicator. But, the enocean library seems abandoned
+        cb_to_restore = communicator.callback
+
+        communicator.callback = None
+
+        # get the base id of the transceiver module
+        base_id = communicator.base_id
+        logger.debug("Base ID of EnOcean transceiver module: %s", str(base_id))
+
+    finally:
+        # restore the callback
+        communicator.callback = cb_to_restore
+    return base_id, cb_to_restore
+
+
+async def determine_rorg_type(packet):
+    """Determine the type of packet."""
+    if packet is None:
+        return None
+
+    result = None
+    if packet.data[0] == RORG.UTE:
+        return RORG.UTE
+
+    if packet.packet_type == PACKET.RADIO and packet.rorg == RORG.BS4:
+        return RORG.BS4
+
     return result
