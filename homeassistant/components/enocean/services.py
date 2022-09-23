@@ -5,10 +5,10 @@ import logging
 import queue
 import time
 
-from enocean import utils
-from enocean.communicators import Communicator
-from enocean.protocol.constants import PACKET, RORG
-from enocean.protocol.packet import Packet, UTETeachInPacket
+from enoceanx import utils
+from enoceanx.communicators import Communicator
+from enoceanx.protocol.constants import PACKET, RORG
+from enoceanx.protocol.packet import Packet, UTETeachInPacket
 import voluptuous as vol
 
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -114,7 +114,6 @@ def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
 
     # set the running state to prevent the service from running twice
     hass.states.set(SERVICE_TEACHIN_STATE, SERVICE_TEACHIN_STATE_VALUE_RUNNING)
-
     communicator: Communicator = get_communicator_reference(hass)
 
     # store the originally set callback to restore it after
@@ -123,9 +122,10 @@ def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
     # cb_to_restore = communicator.callback
     # the "correct" way would be to add a property to the communicator
     # to get access to the communicator. But, the enocean library seems abandoned
-    cb_to_restore = communicator._Communicator__callback
+    cb_to_restore = communicator.callback
+    # cb_to_restore = communicator._Communicator__callback
 
-    communicator._Communicator__callback = None
+    communicator.callback = None
 
     try:
         # get time to run of the teach-in process from the service call
@@ -160,7 +160,8 @@ def handle_teach_in(hass: HomeAssistant, service_call: ServiceCall) -> None:
     finally:
         # restore callback in any case
         _LOGGER.debug("Restoring callback function")
-        communicator._Communicator__callback = cb_to_restore
+        communicator.callback = cb_to_restore
+        # communicator._Communicator__callback = cb_to_restore
         # clear the state so that the service can be called again
         hass.states.set(SERVICE_TEACHIN_STATE, "")
 

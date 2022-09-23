@@ -1,9 +1,10 @@
 """Support for EnOcean switches."""
 from __future__ import annotations
 
-from enocean.protocol.constants import RORG
 from typing import Any
-from enocean.utils import combine_hex
+
+from enoceanx.protocol.constants import RORG
+from enoceanx.utils import combine_hex
 import voluptuous as vol
 
 from homeassistant.components.switch import PLATFORM_SCHEMA, SwitchEntity

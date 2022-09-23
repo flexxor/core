@@ -2,9 +2,9 @@
 from abc import ABC, abstractmethod
 import logging
 
-from enocean.communicators import Communicator
-from enocean.protocol.constants import PACKET
-from enocean.protocol.packet import Packet, RadioPacket
+from enoceanx.communicators import Communicator
+from enoceanx.protocol.packet import Packet, RadioPacket
+from enoceanx.protocol.teachin import TeachInHelper
 
 from homeassistant.core import HomeAssistant
 
@@ -54,44 +54,13 @@ class FourBsTeachInHandler(TeachInHandler):
         self, hass: HomeAssistant, packet: Packet, communicator: Communicator
     ):
         """Handle the 4BS-type teach-in request."""
-        rorg = packet.rorg
-        func = packet.rorg_func
-        rorg_type = packet.rorg_type
-        teach_in_response_packet: RadioPacket = Packet.create(
-            PACKET.RADIO,
-            # respond with 4BS teach-in-response
-            rorg=rorg,  # RORG.BS4
-            rorg_func=func,
-            rorg_type=rorg_type,
-            sender=communicator.base_id,
-            learn=True,
+
+        teach_in_response_packet = TeachInHelper.create_bs4_teach_in_response(
+            packet, communicator
         )
-
-        # copy over the packet data as it will be sent back with slight variation
-        teach_in_response_packet.data[1:5] = packet.data[1:5]
-
-        # set the bits of the byte for the success case (F0 = 11110000)
-        teach_in_response_packet.data[4] = 0xF0
-
-        # set destination of response to former sender
-        destination = packet.data[-5:-1]
-        # is this the sender?
-        self.logger.info("Former sender: %s", destination)
-        to_be_taught_device_id = destination
-        teach_in_response_packet.destination = destination
-
-        # set sender to base id (no offset)
-        self.logger.info("Base ID to use: %s", str(self.base_id))
-        teach_in_response_packet.sender = self.base_id
-
-        # build the optional data
-        # subTelegram Number + destination + dBm (send case: FF) + security (0)
-        optional = [3] + destination + [0xFF, 0]
-        teach_in_response_packet.optional = optional
-        teach_in_response_packet.parse()
-        self.logger.info("4BS teach-in response created")
 
         # send the packet via the communicator
         successful_sent = communicator.send(teach_in_response_packet)
+        to_be_taught_device_id = teach_in_response_packet.destination
 
         return successful_sent, to_be_taught_device_id

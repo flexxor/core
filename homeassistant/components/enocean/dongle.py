@@ -3,8 +3,8 @@ import glob
 import logging
 from os.path import basename, normpath
 
-from enocean.communicators import SerialCommunicator
-from enocean.protocol.packet import RadioPacket
+from enoceanx.communicators import SerialCommunicator
+from enoceanx.protocol.packet import RadioPacket
 import serial
 
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, dispatcher_send

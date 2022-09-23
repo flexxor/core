@@ -21,5 +21,24 @@
       "invalid_dongle_path": "Invalid dongle path",
       "single_instance_allowed": "[%key:common::config_flow::abort::single_instance_allowed%]"
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Teach in a new device",
+        "description": "Start the process of 4BS teach-in"
+      },
+      "teach_in": {
+        "title": "Teach in a new device",
+        "description": "Start the process of 4BS teach-in. "
+      },
+      "teach_in_sth": {
+        "title": "Time to listen for teach-in requests",
+        "data": {
+          "teach_in_time": "Maximum is 600"
+        },
+        "description": "How long shall the process run (listen for teach-in-requests) (in seconds)."
+      }
+    }
   }
 }

@@ -21,5 +21,24 @@
                 "title": "Enter the path to you ENOcean dongle"
             }
         }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "description": "Start the process of 4BS teach-in",
+                "title": "Teach in a new device"
+            },
+            "teach_in": {
+                "description": "Start the process of 4BS teach-in. ",
+                "title": "Teach in a new device"
+            },
+            "teach_in_sth": {
+                "data": {
+                    "teach_in_time": "Maximum is 600"
+                },
+                "description": "How long shall the process run (listen for teach-in-requests) (in seconds).",
+                "title": "Time to listen for teach-in requests"
+            }
+        }
     }
 }

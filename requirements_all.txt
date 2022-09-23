@@ -604,6 +604,7 @@ emulated_roku==0.2.1
 
 # homeassistant.components.enocean
 enocean==0.60.1
+enoceanx==0.62
 
 # homeassistant.components.entur_public_transport
 enturclient==0.2.4

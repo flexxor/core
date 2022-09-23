@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 
-from enocean.communicators import Communicator
+from enoceanx.communicators import Communicator
 
 import homeassistant.components.enocean as ec  # import DATA_ENOCEAN, ENOCEAN_DONGLE, EnOceanDongle
 from homeassistant.core import HomeAssistant

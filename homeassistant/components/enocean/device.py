@@ -1,6 +1,6 @@
 """Representation of an EnOcean device."""
-from enocean.protocol.packet import Packet
-from enocean.utils import combine_hex
+from enoceanx.protocol.packet import Packet
+from enoceanx.utils import combine_hex
 
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, dispatcher_send
 from homeassistant.helpers.entity import Entity
